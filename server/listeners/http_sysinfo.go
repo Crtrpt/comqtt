@@ -10,6 +10,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/wind-c/comqtt/server/listeners/auth"
 	"github.com/wind-c/comqtt/server/system"
 )
@@ -66,11 +69,36 @@ func (l *HTTPStats) ID() string {
 	return id
 }
 
+type metrics struct {
+	Count *prometheus.CounterVec
+}
+
+func NewMetrics(reg prometheus.Registerer) *metrics {
+	m := &metrics{
+		Count: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "test_counter",
+			Help: "测试的数据",
+		}, []string{"test1", "test2", "test3"}),
+	}
+	reg.MustRegister(m.Count)
+	return m
+}
+
 // Listen starts listening on the listener's network address.
 func (l *HTTPStats) Listen(s *system.Info) error {
 	l.system = s
 	mux := http.NewServeMux()
+
+	reg := prometheus.NewRegistry()
+
+	// Add go runtime metrics and process collectors.
+	reg.MustRegister(
+		collectors.NewGoCollector(),
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+	)
+	m := NewMetrics(reg)
 	mux.HandleFunc("/", l.jsonHandler)
+	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{Registry: reg}))
 
 	for path, handler := range l.handlers {
 		mux.HandleFunc(path, handler)
@@ -81,6 +109,13 @@ func (l *HTTPStats) Listen(s *system.Info) error {
 		Handler: mux,
 	}
 
+	go func() {
+		for {
+
+			m.Count.WithLabelValues("test1", "test2", "test3").Add(20)
+			time.Sleep(time.Duration(10) * time.Millisecond)
+		}
+	}()
 	// The following logic is deprecated in favour of passing through the tls.Config
 	// value directly, however it remains in order to provide backwards compatibility.
 	// It will be removed someday, so use the preferred method (l.config.TLSConfig).
